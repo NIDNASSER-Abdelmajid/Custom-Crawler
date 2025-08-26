@@ -25,6 +25,11 @@ python cli.py -f urls.txt -t 60 -p profiles
 python cli.py -u https://example.com -t 60 -p profiles
 ```
 
+**Working with Chromium browser:**
+```bash
+python cli.py -f urls.txt -t 60 -p profiles -ch [CHROMIUM_PATH]
+```
+
 ## Command Options
 
 | Flag | Description | Default |
@@ -33,10 +38,11 @@ python cli.py -u https://example.com -t 60 -p profiles
 | `-u` | Single URL to crawl | - |
 | `-t` | Time to spend on each website (seconds) | 60 |
 | `-p` | Profiles directory | `./profiles` |
+| `-ch` | Chromium path (.exe) | - |
 
 ## Prerequisites
 
-- **Chromium Browser**: Place in project root as `chrome-win/chrome.exe`
+- **Chromium Browser**: Add the chromium browser path to the command (-ch), else the script will execute and evoke the default chrome browser
 - **URL Format**: URLs don't need protocol prefixes (http/https added automatically)
 - **Comments**: Lines starting with `#` are ignored in URL files
 
