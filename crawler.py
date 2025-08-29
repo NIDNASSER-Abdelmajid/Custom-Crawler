@@ -29,16 +29,26 @@ class WebCrawler:
             chrome_options.binary_location = self.chromium
 
         chrome_options.add_argument("--start-maximized")
-        chrome_options.add_argument("--disable-notifications")
+        # chrome_options.add_argument("--disable-notifications")
         chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
         
         chrome_options.add_argument("--no-sandbox")
         
         chrome_options.add_argument("--remote-debugging-port=9222")
-        chrome_options.add_argument("--autoplay-policy=no-user-gesture-required")
-        chrome_options.add_argument("--enable-features=MediaFoundationH264Remoting,UseChromeOSDirectVideoDecoder")
-        chrome_options.add_argument("--disable-features=HardwareMediaKeyHandling")
+        # chrome_options.add_argument("--autoplay-policy=no-user-gesture-required")
+        # chrome_options.add_argument("--enable-features=MediaFoundationH264Remoting,UseChromeOSDirectVideoDecoder")
+        # chrome_options.add_argument("--disable-features=HardwareMediaKeyHandling")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-software-rasterizer")
         chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
+
+
+        # TODO: Implement next step here
+
         try:
             self.driver = webdriver.Chrome(
                 options=chrome_options
@@ -52,6 +62,9 @@ class WebCrawler:
             try:
                 self.logger.info("Trying fallback initialization...")
                 self.driver = webdriver.Chrome(options=chrome_options)
+
+                self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
                 self.logger.info("ChromeDriver initialized with fallback method")
                 return True
             except Exception as e2:
@@ -103,16 +116,46 @@ class WebCrawler:
         except Exception as e:
             self.logger.error(f"Error capturing requests: {e}")
             return []
-    
-    def _capture_cookies(self):
-        """Capture all cookies"""
+
+    def _capture_all_cookies(self):
+        """Capture all cookies (standard, CDP, JS) and merge them."""
+        all_cookies = []
+
+        # 1. Normal cookies
         try:
-            cookies = self.driver.get_cookies()
-            return cookies
+            selenium_cookies = self.driver.get_cookies()
+            all_cookies.extend(selenium_cookies)
         except Exception as e:
-            self.logger.error(f"Error capturing cookies: {e}")
-            return []
-    
+            if self.logger: self.logger.error(f"Selenium get_cookies failed: {e}")
+
+        # 2. CDP cookies
+        try:
+            cdp_cookies = self.driver.execute_cdp_cmd("Network.getAllCookies", {}).get("cookies", [])
+            all_cookies.extend(cdp_cookies)
+        except Exception as e:
+            if self.logger: self.logger.error(f"CDP getAllCookies failed: {e}")
+
+        # 3. JS cookies
+        try:
+            js_cookie_str = self.driver.execute_script("return document.cookie")
+            if js_cookie_str:
+                for item in js_cookie_str.split(";"):
+                    name, _, value = item.strip().partition("=")
+                    all_cookies.append({"name": name, "value": value})
+        except Exception as e:
+            if self.logger: self.logger.error(f"document.cookie failed: {e}")
+
+        seen = set()
+        unique_cookies = []
+        for c in all_cookies:
+            key = (c.get("name"), c.get("domain"), c.get("path"))
+            if key not in seen:
+                seen.add(key)
+                unique_cookies.append(c)
+
+        return unique_cookies
+
+
     def _save_data(self, profile_path, url, cookies, requests):
         """Save all data to JSON file"""
         data_file = os.path.join(profile_path, "data.json")
@@ -209,7 +252,8 @@ class WebCrawler:
                 except Exception as e:
                     self.logger.error(f"Error setting cookies: {e}")
             
-            self.logger.info(f"Going to: {url}")
+            self.logger.info(f"Going to: {url} in 5s...")
+            time.sleep(4.11)
             self.driver.get(url)
             
             WebDriverWait(self.driver, 20).until(
@@ -219,7 +263,7 @@ class WebCrawler:
             time.sleep(wait_time)
             
             self.logger.info("Capturing data...")
-            cookies = self._capture_cookies()
+            cookies = self._capture_all_cookies()
             requests = self._capture_network_requests()  
             self._save_data(profile_path, url, cookies, requests)
             

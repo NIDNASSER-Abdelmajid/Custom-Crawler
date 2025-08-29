@@ -1,9 +1,12 @@
 import argparse
 import os
 import shutil
+import time
 import logging
 from datetime import datetime
 from crawler import WebCrawler
+from helpers.VPN import connect_to_vpn, disconnect_and_kill_vpn
+from helpers.essentials import vpn_path, chromium_path
 
 def setup_logging():
     """Setup logging configuration with log rotation into logs/ folder"""
@@ -54,7 +57,8 @@ def main():
                        help='Time to wait on each website (seconds)')
     parser.add_argument('-p', '--profile-dir', default='profiles',
                        help='Directory to store website profiles')
-    parser.add_argument('-ch', '--chromium', help='Path to Chromium executable')
+    parser.add_argument('-ch', '--chromium', action='store_true', help='Path to Chromium executable')
+    parser.add_argument('-vpn', '--vpn', action='store_true', help='Path to VPN executable')
 
     args = parser.parse_args()
     
@@ -64,13 +68,23 @@ def main():
         urls = [args.url]
 
     if not urls:
-        print("No URLs provided or found in file.")
+        logging.warning("No URLs provided or found in file.")
         return
     
     logger = setup_logging()
     logger.info(f"Starting crawler with {len(urls)} URLs")
 
-    crawler = WebCrawler(profile_dir=args.profile_dir, chromium=args.chromium, logger=logger)
+    if args.vpn:
+        logger.info("Connecting to VPN...")
+        try:
+            connect_to_vpn(vpn_path)
+            time.sleep(28.7568)
+            logger.info("VPN connected")
+        except Exception as e:
+            logger.error(f"Error connecting to VPN: {e}")
+
+
+    crawler = WebCrawler(profile_dir=args.profile_dir, chromium=chromium_path, logger=logger)
 
     try:
         for i, url in enumerate(urls, 1):
@@ -84,6 +98,9 @@ def main():
         logger.error(f"Error during crawling: {e}")
     finally:
         crawler.close()
+        if args.vpn:
+            disconnect_and_kill_vpn(vpn_path)
+            logger.info("VPN disconnected and killed")
         logger.info("Crawler session completed")
 
 if __name__ == "__main__":
