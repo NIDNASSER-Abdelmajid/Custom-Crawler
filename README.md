@@ -27,7 +27,7 @@ python cli.py -u https://example.com -t 60 -p profiles
 
 **Working with Chromium browser:**
 ```bash
-python cli.py -f urls.txt -t 60 -p profiles -ch [CHROMIUM_PATH]
+python cli.py -f urls.txt -t 60 -p profiles -ch
 ```
 
 ## Command Options
@@ -39,17 +39,19 @@ python cli.py -f urls.txt -t 60 -p profiles -ch [CHROMIUM_PATH]
 | `-t` | Time to spend on each website (seconds) | 60 |
 | `-p` | Profiles directory | `./profiles` |
 | `-ch` | Chromium path (.exe) | - |
+| `-vpn` | Work with vpn (ProtonVPN is the only choice currently) | - |
 
 ## Prerequisites
 
-- **Chromium Browser**: Add the chromium browser path to the command (-ch), else the script will execute and evoke the default chrome browser
+- **Chromium Browser**: Add the chromium browser path to the variable `chromium_path` inside the `helpers\essentials.py` file, and add the `-ch` flag to your command to work withe the chromium browser
+- **VPN Configuration**: Add the ProtonVPN path to the variable `vpn_path` inside the `helpers\essentials.py` file, and add the `-vpn` flag to your command
 - **URL Format**: URLs don't need protocol prefixes (http/https added automatically)
 - **Comments**: Lines starting with `#` are ignored in URL files
 
 ## How It Works
 
 The crawler creates isolated browser profiles for each website domain. When visiting a site:
-
+0. **VPN Connection**: In case this option is chosen, the VPN connection is established, and once the script execution is terminated the VPN process is killed
 1. **Profile Selection**: Uses or creates a dedicated profile directory for the domain
 2. **Initial Navigation**: Loads the website to establish domain context
 3. **Cookie Restoration**: Applies previously saved cookies from earlier sessions
