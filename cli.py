@@ -5,10 +5,7 @@ import time
 import logging
 from datetime import datetime
 from crawler import WebCrawler
-<<<<<<< HEAD
 import pandas as pd
-=======
->>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
 from helpers.VPN import connect_to_vpn, disconnect_and_kill_vpn
 from helpers.essentials import vpn_path, chromium_path
 
@@ -55,11 +52,7 @@ def main():
     
     url_group = parser.add_mutually_exclusive_group(required=True)
     url_group.add_argument('-u', '--url', help='Single URL to crawl')
-<<<<<<< HEAD
     url_group.add_argument('-uc', '--url-category', help='Category of URLs to crawl', choices=['eu', 'usa'])
-=======
-    url_group.add_argument('-f', '--file', help='Path to file containing URLs')
->>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
     
     parser.add_argument('-t', '--time', type=int, default=60, 
                        help='Time to wait on each website (seconds)')
@@ -69,7 +62,6 @@ def main():
     parser.add_argument('-vpn', '--vpn', action='store_true', help='Path to VPN executable')
 
     args = parser.parse_args()
-<<<<<<< HEAD
 
     urls = []
 
@@ -78,11 +70,6 @@ def main():
             urls = pd.read_csv('urls/EU_websites.csv')['Domain'].tolist()
         elif args.url_category == 'usa':
             urls = pd.read_csv('urls/USA_websites.csv')['Domain'].tolist()
-=======
-    
-    if args.file:
-        urls = read_urls_from_file(args.file)
->>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
     else:
         urls = [args.url]
 
@@ -102,18 +89,14 @@ def main():
         except Exception as e:
             logger.error(f"Error connecting to VPN: {e}")
 
-<<<<<<< HEAD
     master_file = "masterfile.csv"
     if not os.path.exists(master_file):
         pd.DataFrame(columns=['Id', 'URL', 'Crawling Status', 'Number of Cookies', 'Number of Requests', 'Last Successful Crawl', 'Comment']).to_csv(master_file, index=False)
     os.makedirs("data", exist_ok=True)
-=======
->>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
 
     crawler = WebCrawler(profile_dir=args.profile_dir, chromium=chromium_path, logger=logger)
 
     try:
-<<<<<<< HEAD
         counter = 0
         for i, url in enumerate(urls, 1):
             logger.info(f"[{i}/{len(urls)}] Crawling: {url}")
@@ -131,12 +114,6 @@ def main():
                     logger.info("Crawling session ended by user")
                     break
                 counter = 0
-=======
-        for i, url in enumerate(urls, 1):
-            logger.info(f"[{i}/{len(urls)}] Crawling: {url}")
-            
-            crawler.visit_website(url, wait_time=args.time)
->>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
     
     except KeyboardInterrupt:
         logger.warning("Crawler interrupted by user")
