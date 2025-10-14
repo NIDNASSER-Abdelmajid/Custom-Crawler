@@ -1,0 +1,6 @@
+env/
+logs/
+*.log
+test.py
+profiles/
+data/
