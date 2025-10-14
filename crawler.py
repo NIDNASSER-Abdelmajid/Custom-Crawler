@@ -2,7 +2,10 @@ import os
 import json
 import time
 import logging
+<<<<<<< HEAD
 import threading
+=======
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
 from datetime import datetime
 from urllib.parse import urlparse
 from selenium import webdriver
@@ -26,8 +29,13 @@ class WebCrawler:
         """Initialize Chrome WebDriver with custom binary location"""
         
         chrome_options = Options()
+<<<<<<< HEAD
         # if self.chromium:
         #     chrome_options.binary_location = self.chromium
+=======
+        if self.chromium:
+            chrome_options.binary_location = self.chromium
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
 
         chrome_options.add_argument("--start-maximized")
         # chrome_options.add_argument("--disable-notifications")
@@ -136,6 +144,19 @@ class WebCrawler:
         except Exception as e:
             if self.logger: self.logger.error(f"CDP getAllCookies failed: {e}")
 
+<<<<<<< HEAD
+=======
+        # 3. JS cookies
+        try:
+            js_cookie_str = self.driver.execute_script("return document.cookie")
+            if js_cookie_str:
+                for item in js_cookie_str.split(";"):
+                    name, _, value = item.strip().partition("=")
+                    all_cookies.append({"name": name, "value": value})
+        except Exception as e:
+            if self.logger: self.logger.error(f"document.cookie failed: {e}")
+
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
         seen = set()
         unique_cookies = []
         for c in all_cookies:
@@ -150,7 +171,10 @@ class WebCrawler:
     def _save_data(self, profile_path, url, cookies, requests):
         """Save all data to JSON file"""
         data_file = os.path.join(profile_path, "data.json")
+<<<<<<< HEAD
         parsed_url = url.replace("www.","").replace(".", "_").split("//")[-1]
+=======
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
         
         crawler_data = {
             "url": url,
@@ -165,15 +189,22 @@ class WebCrawler:
         try:
             with open(data_file, "w", encoding="utf-8") as f:
                 json.dump(crawler_data, f, indent=2, ensure_ascii=False)
+<<<<<<< HEAD
             with open(f"data/{parsed_url}.json", "w", encoding="utf-8") as f:
                 json.dump(crawler_data, f, indent=2, ensure_ascii=False)
+=======
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
             
             self.logger.info(f"Data saved: {len(requests)} requests, {len(cookies)} cookies")
             
         except Exception as e:
             self.logger.error(f"Error saving data: {e}")
     
+<<<<<<< HEAD
     def visit_website(self, website_index, url, wait_time=10):
+=======
+    def visit_website(self, url, wait_time=10):
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
         """Visit a website and capture data"""
         try:
             if not url.startswith(("http://", "https://")):
@@ -204,8 +235,11 @@ class WebCrawler:
             )
             
             data_file = os.path.join(profile_path, "data.json")
+<<<<<<< HEAD
             data_folder = "data"
             os.makedirs(data_folder, exist_ok=True)
+=======
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
             if os.path.exists(data_file):
                 try:
                     with open(data_file, "r") as f:
@@ -249,13 +283,18 @@ class WebCrawler:
                     self.logger.error(f"Error setting cookies: {e}")
             
             self.logger.info(f"Going to: {url} in 5s...")
+<<<<<<< HEAD
             time.sleep(3.11)
+=======
+            time.sleep(4.11)
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
             self.driver.get(url)
             
             WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             self.logger.info(f"Waiting for {wait_time} seconds...")
+<<<<<<< HEAD
             # time.sleep(wait_time)
             comment = [""]
             input_received = threading.Event()
@@ -278,11 +317,15 @@ class WebCrawler:
                 input_thread.join()
             
             comment = comment[0]
+=======
+            time.sleep(wait_time)
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
             
             self.logger.info("Capturing data...")
             cookies = self._capture_all_cookies()
             requests = self._capture_network_requests()  
             self._save_data(profile_path, url, cookies, requests)
+<<<<<<< HEAD
 
             #input the comment
             # comment = self.logger.info("Please enter a comment for this crawl (or press Enter to skip): ")
@@ -299,6 +342,9 @@ class WebCrawler:
                 mf.seek(0)
                 mf.writelines(lines)
                 mf.truncate()
+=======
+            
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
             self.logger.info(f"Title: {self.driver.title}")
             self.logger.info(f"URL(last visited page/subpage): {self.driver.current_url}")
             self.logger.info(f"Cookies: {len(cookies)}")
@@ -306,6 +352,7 @@ class WebCrawler:
             
         except Exception as e:
             self.logger.error(f"Error visiting {url}: {e}")
+<<<<<<< HEAD
             
             if self.driver:
                 self.driver.quit()
@@ -325,6 +372,11 @@ class WebCrawler:
                     mf.truncate()
             except Exception as csv_error:
                 self.logger.error(f"Error updating CSV: {csv_error}")
+=======
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+>>>>>>> 754b2a60be2389570ea0309ab9e73827e58f3b45
             raise
 
     def close(self):
