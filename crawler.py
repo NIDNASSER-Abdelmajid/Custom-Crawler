@@ -1,5 +1,6 @@
 import os
 import json
+import csv
 import time
 import logging
 import threading
@@ -147,33 +148,81 @@ class WebCrawler:
         return unique_cookies
 
 
-    def _save_data(self, profile_path, url, cookies, requests):
-        """Save all data to JSON file"""
+    def _save_data(self, profile_path, url, cookies, requests, profile_name):
+        """Save all data to JSON file with flattened structure"""
         data_file = os.path.join(profile_path, "data.json")
         parsed_url = url.replace("www.","").replace(".", "_").split("//")[-1]
         
-        crawler_data = {
-            "url": url,
-            "timestamp": datetime.now().isoformat(),
-            "page_title": self.driver.title if self.driver else "",
-            "cookies": cookies,
-            "requests": requests,
-            "cookies_count": len(cookies),
-            "requests_count": len(requests)
-        }
+        source_domain = urlparse(url).netloc
+        timestamp = datetime.now().isoformat()
+        page_title = self.driver.title if self.driver else ""
+        browser_id = profile_name  # Using profile_name as browser_id
+        
+        entries = []
+        
+        # Process cookies
+        for cookie in cookies:
+            cookie_domain = cookie.get("domain", "")
+            # Determine party_type
+            if cookie_domain:
+                cookie_domain_clean = cookie_domain.lstrip(".")
+                if source_domain.endswith(cookie_domain_clean) or cookie_domain_clean == source_domain:
+                    party_type = "first-party"
+                else:
+                    party_type = "third-party"
+            else:
+                party_type = "unknown"
+            
+            entry = {
+                "cookie_name": cookie.get("name"),
+                "cookie_value": cookie.get("value"),
+                "cookie_domain": cookie_domain,
+                "cookie_path": cookie.get("path"),
+                "cookie_secure": cookie.get("secure", False),
+                "cookie_httpOnly": cookie.get("httpOnly", False),
+                "request_url": None,
+                "request_method": None,
+                "request_timestamp": None,
+                "source_url": url,
+                "timestamp": timestamp,
+                "page_title": page_title,
+                "browser_id": browser_id,
+                "party_type": party_type
+            }
+            entries.append(entry)
+        
+        # Process requests
+        for request in requests:
+            entry = {
+                "cookie_name": None,
+                "cookie_value": None,
+                "cookie_domain": None,
+                "cookie_path": None,
+                "cookie_secure": None,
+                "cookie_httpOnly": None,
+                "request_url": request["url"],
+                "request_method": request["method"],
+                "request_timestamp": request["timestamp"],
+                "source_url": url,
+                "timestamp": timestamp,
+                "page_title": page_title,
+                "browser_id": browser_id,
+                "party_type": None  # Requests don't have party_type
+            }
+            entries.append(entry)
         
         try:
             with open(data_file, "w", encoding="utf-8") as f:
-                json.dump(crawler_data, f, indent=2, ensure_ascii=False)
+                json.dump(entries, f, indent=2, ensure_ascii=False)
             with open(f"data/{parsed_url}.json", "w", encoding="utf-8") as f:
-                json.dump(crawler_data, f, indent=2, ensure_ascii=False)
+                json.dump(entries, f, indent=2, ensure_ascii=False)
             
-            self.logger.info(f"Data saved: {len(requests)} requests, {len(cookies)} cookies")
+            self.logger.info(f"Data saved: {len(entries)} entries ({len(cookies)} cookies, {len(requests)} requests)")
             
         except Exception as e:
             self.logger.error(f"Error saving data: {e}")
     
-    def visit_website(self, website_index, url, wait_time=10):
+    def visit_website(self, website_index, url, wait_time=10, category='Unknown'):
         """Visit a website and capture data"""
         try:
             if not url.startswith(("http://", "https://")):
@@ -282,23 +331,43 @@ class WebCrawler:
             self.logger.info("Capturing data...")
             cookies = self._capture_all_cookies()
             requests = self._capture_network_requests()  
-            self._save_data(profile_path, url, cookies, requests)
+            self._save_data(profile_path, url, cookies, requests, profile_name)
 
-            #input the comment
-            # comment = self.logger.info("Please enter a comment for this crawl (or press Enter to skip): ")
-            # comment = input()
-            # check by url if already in csv, to update it, else append it
-            with open('masterfile.csv', 'r+', encoding='utf-8') as mf:
-                lines = mf.readlines()
-                for i, line in enumerate(lines):
-                    if url in line:
-                        lines[i] = f'{website_index},{url},"{self.driver.title}",{"Success" if not comment else "Failed"},{len(cookies)},{len(requests)},{datetime.now().isoformat()},{comment}\n'
-                        break
+            # Update masterfile.csv safely
+            rows = []
+            with open('masterfile.csv', 'r', newline='', encoding='utf-8') as mf:
+                reader = csv.reader(mf)
+                header = next(reader)
+                if 'Region' not in header:
+                    header.insert(2, 'Region')
+                rows.append(header)
+                for row in reader:
+                    if 'Region' not in header and len(header) == 8:  # old header without Region
+                        row.insert(2, '')  # insert empty Region
+                    if len(row) > 1 and row[1] == url:
+                        # Update existing row
+                        row[2] = category  # Region
+                        row[3] = self.driver.title
+                        row[3] = self.driver.title
+                        row[4] = "Success" if not comment else "Failed"
+                        row[5] = str(len(cookies))
+                        row[6] = str(len(requests))
+                        row[7] = datetime.now().isoformat()
+                        row[8] = comment
+                        updated = True
+                    rows.append(row)
+            
+            if not updated:
+                # Append new row
+                if 'Region' not in header:
+                    new_row = [str(website_index), url, category, self.driver.title, "Success" if not comment else "Failed", str(len(cookies)), str(len(requests)), datetime.now().isoformat(), comment]
                 else:
-                    lines.append(f'{website_index},{url},"{self.driver.title}",{ "Success" if not comment else "Failed" },{len(cookies)},{len(requests)},{datetime.now().isoformat()},{comment}\n')
-                mf.seek(0)
-                mf.writelines(lines)
-                mf.truncate()
+                    new_row = [str(website_index), url, category, self.driver.title, "Success" if not comment else "Failed", str(len(cookies)), str(len(requests)), datetime.now().isoformat(), comment]
+                rows.append(new_row)
+            
+            with open('masterfile.csv', 'w', newline='', encoding='utf-8') as mf:
+                writer = csv.writer(mf)
+                writer.writerows(rows)
             self.logger.info(f"Title: {self.driver.title}")
             self.logger.info(f"URL(last visited page/subpage): {self.driver.current_url}")
             self.logger.info(f"Cookies: {len(cookies)}")
@@ -312,17 +381,37 @@ class WebCrawler:
                 self.driver = None
 
             try:
-                with open('masterfile.csv', 'r+', encoding='utf-8') as mf:
-                    lines = mf.readlines()
-                    for i, line in enumerate(lines):
-                        if url in line:
-                            lines[i] = f'{website_index},{url},"",Failed,0,0,{datetime.now().isoformat()},Connection timeout\n'
-                            break
+                rows = []
+                with open('masterfile.csv', 'r', newline='', encoding='utf-8') as mf:
+                    reader = csv.reader(mf)
+                    header = next(reader)
+                    if 'Region' not in header:
+                        header.insert(2, 'Region')
+                    rows.append(header)
+                    for row in reader:
+                        if 'Region' not in header and len(header) == 8:
+                            row.insert(2, '')
+                        if len(row) > 1 and row[1] == url:
+                            row[2] = category
+                            row[3] = ""
+                            row[4] = "Failed"
+                            row[5] = "0"
+                            row[6] = "0"
+                            row[7] = datetime.now().isoformat()
+                            row[8] = "Connection timeout"
+                            updated = True
+                        rows.append(row)
+                
+                if not updated:
+                    if 'Region' not in header:
+                        new_row = [str(website_index), url, category, "", "Failed", "0", "0", datetime.now().isoformat(), "Connection timeout"]
                     else:
-                        lines.append(f'{website_index},{url},"",Failed,0,0,{datetime.now().isoformat()},Connection timeout\n')
-                    mf.seek(0)
-                    mf.writelines(lines)
-                    mf.truncate()
+                        new_row = [str(website_index), url, category, "", "Failed", "0", "0", datetime.now().isoformat(), "Connection timeout"]
+                    rows.append(new_row)
+                
+                with open('masterfile.csv', 'w', newline='', encoding='utf-8') as mf:
+                    writer = csv.writer(mf)
+                    writer.writerows(rows)
             except Exception as csv_error:
                 self.logger.error(f"Error updating CSV: {csv_error}")
             raise

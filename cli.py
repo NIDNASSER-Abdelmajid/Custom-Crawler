@@ -68,10 +68,13 @@ def main():
     if args.url_category:
         if args.url_category == 'eu':
             urls = pd.read_csv('urls/EU_websites.csv')['Domain'].tolist()
+            category = 'EU'
         elif args.url_category == 'usa':
             urls = pd.read_csv('urls/USA_websites.csv')['Domain'].tolist()
+            category = 'USA'
     else:
         urls = [args.url]
+        category = 'Unknown'
 
     if not urls:
         logging.warning("No URLs provided or found in file.")
@@ -91,7 +94,13 @@ def main():
 
     master_file = "masterfile.csv"
     if not os.path.exists(master_file):
-        pd.DataFrame(columns=['Id', 'URL', 'Crawling Status', 'Number of Cookies', 'Number of Requests', 'Last Successful Crawl', 'Comment']).to_csv(master_file, index=False)
+        pd.DataFrame(columns=['Id', 'URL', 'Region', 'Page Title', 'Crawling Status', 'Number of Cookies', 'Number of Requests', 'Last Successful Crawl', 'Comment']).to_csv(master_file, index=False)
+    else:
+        # Check if Region column exists, if not add it
+        df = pd.read_csv(master_file)
+        if 'Region' not in df.columns:
+            df['Region'] = ''
+            df.to_csv(master_file, index=False)
     os.makedirs("data", exist_ok=True)
 
     crawler = WebCrawler(profile_dir=args.profile_dir, chromium=chromium_path, logger=logger)
@@ -102,7 +111,7 @@ def main():
             logger.info(f"[{i}/{len(urls)}] Crawling: {url}")
             
             try:
-                crawler.visit_website(i, url, wait_time=args.time)
+                crawler.visit_website(i, url, wait_time=args.time, category=category)
                 counter += 1
             except Exception as e:
                 logger.error(f"Failed to crawl {url}, continuing to next...")
