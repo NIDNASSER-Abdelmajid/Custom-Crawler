@@ -5,4 +5,4 @@ test.py
 profiles/
 data/
 trash.txt
-masterfile.csv
+*.csv
