@@ -1,4 +1,4 @@
-vpn_path = r"C:\Program Files (x86)\Proton Technologies\ProtonVPN\ProtonVPN.exe"
-chromium_path = r"C:\Users\super\OneDrive\Desktop\newCrawler\chrome-win\chrome.exe"
+vpn_path = "/usr/bin/vpn"
+chromium_path = "/usr/bin/chromium"
 
 __all__ = ["vpn_path", "chromium_path"]

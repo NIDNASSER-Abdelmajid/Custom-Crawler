@@ -6,3 +6,4 @@ profiles/
 data/
 trash.txt
 *.csv
+*.json

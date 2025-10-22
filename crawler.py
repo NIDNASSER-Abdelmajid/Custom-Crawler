@@ -31,7 +31,7 @@ class WebCrawler:
         #     chrome_options.binary_location = self.chromium
 
         chrome_options.add_argument("--start-maximized")
-        # chrome_options.add_argument("--disable-notifications")
+        # # chrome_options.add_argument("--disable-notifications")
         chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
         
         chrome_options.add_argument("--no-sandbox")
@@ -55,6 +55,17 @@ class WebCrawler:
             self.driver = webdriver.Chrome(
                 options=chrome_options
             )
+            
+            # Enable network domain to capture all network events including headers
+            self.driver.execute_cdp_cmd("Network.enable", {
+                "maxTotalBufferSize": 10000000,
+                "maxResourceBufferSize": 5000000,
+                "maxPostDataSize": 5000000
+            })
+            
+            # Also enable Page domain for complete monitoring
+            self.driver.execute_cdp_cmd("Page.enable", {})
+            
             self.logger.info("ChromeDriver initialized successfully")
             return True
             
@@ -95,24 +106,80 @@ class WebCrawler:
         return profile_path, user_data_dir
     
     def _capture_network_requests(self):
-        """Capture network requests"""
+        """Capture network requests and associate cookies with setting requests"""
         try:
             logs = self.driver.get_log("performance")
             requests = []
+            cookies_before_request = {}
             
             for log_entry in logs:
                 try:
                     log_message = json.loads(log_entry["message"])["message"]
+                    method = log_message["method"]
+                    params = log_message["params"]
                     
-                    if log_message["method"] == "Network.requestWillBeSent":
-                        request = log_message["params"]["request"]
+                    if method == "Network.requestWillBeSent":
+                        request_id = params["requestId"]
+                        request = params["request"]
+                        
+                        # Capture cookies before this request
+                        try:
+                            current_cookies = self.driver.get_cookies()
+                            cookies_before_request[request_id] = {f"{c['name']}:{c.get('domain', '')}": c for c in current_cookies}
+                        except:
+                            cookies_before_request[request_id] = {}
+                        
                         requests.append({
+                            "id": request_id,
                             "url": request["url"],
                             "method": request["method"],
-                            "timestamp": datetime.fromtimestamp(log_entry["timestamp"] / 1000).isoformat()
+                            "timestamp": datetime.fromtimestamp(log_entry["timestamp"] / 1000).isoformat(),
+                            "headers": request.get("headers", {}),
+                            "cookies_set": []
                         })
-                except Exception:
+                        
+                    elif method == "Network.loadingFinished":
+                        request_id = params["requestId"]
+                        
+                        # Capture cookies after this request finished
+                        try:
+                            current_cookies = self.driver.get_cookies()
+                            current_cookie_map = {f"{c['name']}:{c.get('domain', '')}": c for c in current_cookies}
+                            
+                            # Find the request this corresponds to
+                            for req in requests:
+                                if req["id"] == request_id and request_id in cookies_before_request:
+                                    prev_cookies = cookies_before_request[request_id]
+                                    
+                                    # Find new cookies
+                                    new_cookies = []
+                                    for cookie_key, cookie_data in current_cookie_map.items():
+                                        if cookie_key not in prev_cookies:
+                                            # This is a new cookie
+                                            new_cookies.append({
+                                                "name": cookie_data["name"],
+                                                "value": cookie_data["value"],
+                                                "domain": cookie_data.get("domain", ""),
+                                                "path": cookie_data.get("path", "/"),
+                                                "secure": cookie_data.get("secure", False),
+                                                "httpOnly": cookie_data.get("httpOnly", False)
+                                            })
+                                    
+                                    if new_cookies:
+                                        req["cookies_set"] = new_cookies
+                                        self.logger.info(f"Request {req['url'][:50]}... set {len(new_cookies)} cookies")
+                                    break
+                                    
+                        except Exception as e:
+                            self.logger.debug(f"Error checking cookies for request {request_id}: {e}")
+                            
+                except Exception as e:
+                    self.logger.debug(f"Error processing log entry: {e}")
                     continue
+            
+            # Debug logging
+            cookies_found = sum(len(req.get("cookies_set", [])) for req in requests)
+            self.logger.info(f"Captured {len(requests)} requests with {cookies_found} cookies set via network activity")
             
             return requests
         except Exception as e:
@@ -160,56 +227,131 @@ class WebCrawler:
         
         entries = []
         
-        # Process cookies
+        # Create a map of cookies by name and domain for quick lookup
+        cookie_map = {}
         for cookie in cookies:
+            cookie_name = cookie.get("name")
             cookie_domain = cookie.get("domain", "")
-            # Determine party_type
-            if cookie_domain:
-                cookie_domain_clean = cookie_domain.lstrip(".")
-                if source_domain.endswith(cookie_domain_clean) or cookie_domain_clean == source_domain:
-                    party_type = "first-party"
-                else:
-                    party_type = "third-party"
-            else:
-                party_type = "unknown"
-            
-            entry = {
-                "cookie_name": cookie.get("name"),
-                "cookie_value": cookie.get("value"),
-                "cookie_domain": cookie_domain,
-                "cookie_path": cookie.get("path"),
-                "cookie_secure": cookie.get("secure", False),
-                "cookie_httpOnly": cookie.get("httpOnly", False),
-                "request_url": None,
-                "request_method": None,
-                "request_timestamp": None,
-                "source_url": url,
-                "timestamp": timestamp,
-                "page_title": page_title,
-                "browser_id": browser_id,
-                "party_type": party_type
-            }
-            entries.append(entry)
+            if cookie_name:
+                key = f"{cookie_name}:{cookie_domain}"
+                cookie_map[key] = cookie
         
-        # Process requests
+        # Process requests and associate cookies that were set by each request
         for request in requests:
-            entry = {
-                "cookie_name": None,
-                "cookie_value": None,
-                "cookie_domain": None,
-                "cookie_path": None,
-                "cookie_secure": None,
-                "cookie_httpOnly": None,
-                "request_url": request["url"],
-                "request_method": request["method"],
-                "request_timestamp": request["timestamp"],
-                "source_url": url,
-                "timestamp": timestamp,
-                "page_title": page_title,
-                "browser_id": browser_id,
-                "party_type": None  # Requests don't have party_type
-            }
-            entries.append(entry)
+            request_url = request["url"]
+            request_method = request["method"]
+            request_timestamp = request["timestamp"]
+            
+            # Check if this request set any cookies
+            cookies_set = request.get("cookies_set", [])
+            
+            if cookies_set:
+                # This request set cookies, create entries for each cookie
+                for cookie_info in cookies_set:
+                    cookie_name = cookie_info["name"]
+                    cookie_domain = cookie_info.get("domain", "")
+                    
+                    # Find the actual cookie in our captured cookies
+                    key = f"{cookie_name}:{cookie_domain}"
+                    actual_cookie = cookie_map.get(key)
+                    
+                    if actual_cookie:
+                        # Use actual cookie data if available, otherwise use parsed data
+                        cookie_value = actual_cookie.get("value", cookie_info.get("value", ""))
+                        cookie_path = actual_cookie.get("path", cookie_info.get("path", "/"))
+                        cookie_secure = actual_cookie.get("secure", cookie_info.get("secure", False))
+                        cookie_httpOnly = actual_cookie.get("httpOnly", cookie_info.get("httpOnly", False))
+                    else:
+                        # Fallback to parsed data
+                        cookie_value = cookie_info.get("value", "")
+                        cookie_path = cookie_info.get("path", "/")
+                        cookie_secure = cookie_info.get("secure", False)
+                        cookie_httpOnly = cookie_info.get("httpOnly", False)
+                    
+                    # Skip if essential cookie attributes are null/empty
+                    if not cookie_name or not cookie_value:
+                        continue
+                    
+                    # Determine party_type
+                    if cookie_domain:
+                        cookie_domain_clean = cookie_domain.lstrip(".")
+                        if source_domain.endswith(cookie_domain_clean) or cookie_domain_clean == source_domain:
+                            party_type = "first-party"
+                        else:
+                            party_type = "third-party"
+                    else:
+                        party_type = "unknown"
+                    
+                    entry = {
+                        "cookie_name": cookie_name,
+                        "cookie_value": cookie_value,
+                        "cookie_domain": cookie_domain,
+                        "cookie_path": cookie_path,
+                        "cookie_secure": cookie_secure,
+                        "cookie_httpOnly": cookie_httpOnly,
+                        "request_url": request_url,
+                        "request_method": request_method,
+                        "request_timestamp": request_timestamp,
+                        "source_url": url,
+                        "timestamp": timestamp,
+                        "page_title": page_title,
+                        "browser_id": browser_id,
+                        "party_type": party_type
+                    }
+                    entries.append(entry)
+            else:
+                # This request didn't set any cookies, but we might still want to track it
+                # For now, we'll skip requests that don't set cookies to keep output focused on cookies
+                pass
+        
+        # Also include any cookies that weren't captured in request/response cycle
+        # (e.g., cookies set by JavaScript or already existing)
+        processed_cookies = set()
+        for entry in entries:
+            processed_cookies.add(f"{entry['cookie_name']}:{entry['cookie_domain']}")
+        
+        for cookie in cookies:
+            cookie_name = cookie.get("name")
+            cookie_value = cookie.get("value")
+            cookie_domain = cookie.get("domain", "")
+            
+            if not cookie_name or not cookie_value:
+                continue
+                
+            key = f"{cookie_name}:{cookie_domain}"
+            if key not in processed_cookies:
+                # This cookie wasn't associated with a request, add it with null request info
+                cookie_path = cookie.get("path")
+                cookie_secure = cookie.get("secure", False)
+                cookie_httpOnly = cookie.get("httpOnly", False)
+                
+                # Determine party_type
+                if cookie_domain:
+                    cookie_domain_clean = cookie_domain.lstrip(".")
+                    if source_domain.endswith(cookie_domain_clean) or cookie_domain_clean == source_domain:
+                        party_type = "first-party"
+                    else:
+                        party_type = "third-party"
+                else:
+                    party_type = "unknown"
+                
+                entry = {
+                    "cookie_name": cookie_name,
+                    "cookie_value": cookie_value,
+                    "cookie_domain": cookie_domain,
+                    "cookie_path": cookie_path,
+                    "cookie_secure": cookie_secure,
+                    "cookie_httpOnly": cookie_httpOnly,
+                    "request_url": None,  # No associated request
+                    "request_method": None,
+                    "request_timestamp": None,
+                    "source_url": url,
+                    "timestamp": timestamp,
+                    "page_title": page_title,
+                    "browser_id": browser_id,
+                    "party_type": party_type
+                }
+                entries.append(entry)
         
         try:
             with open(data_file, "w", encoding="utf-8") as f:
@@ -217,7 +359,7 @@ class WebCrawler:
             with open(f"data/{parsed_url}.json", "w", encoding="utf-8") as f:
                 json.dump(entries, f, indent=2, ensure_ascii=False)
             
-            self.logger.info(f"Data saved: {len(entries)} entries ({len(cookies)} cookies, {len(requests)} requests)")
+            self.logger.info(f"Data saved: {len(entries)} cookie entries")
             
         except Exception as e:
             self.logger.error(f"Error saving data: {e}")
@@ -255,51 +397,51 @@ class WebCrawler:
             data_file = os.path.join(profile_path, "data.json")
             data_folder = "data"
             os.makedirs(data_folder, exist_ok=True)
-            if os.path.exists(data_file):
-                try:
-                    with open(data_file, "r") as f:
-                        existing_data = json.load(f)
-                        cookies = existing_data.get("cookies", [])
-                    self.driver.delete_all_cookies()
+            # if os.path.exists(data_file):
+            #     try:
+            #         with open(data_file, "r") as f:
+            #             existing_data = json.load(f)
+            #             cookies = existing_data.get("cookies", [])
+            #         self.driver.delete_all_cookies()
                     
-                    current_domain = parsed_url.netloc
-                    for cookie in cookies:
-                        cookie_domain = cookie.get("domain", "")                        
-                        if cookie_domain:
-                            cookie_domain_clean = cookie_domain.lstrip(".").lstrip("www.")
+            #         current_domain = parsed_url.netloc
+            #         for cookie in cookies:
+            #             cookie_domain = cookie.get("domain", "")                        
+            #             if cookie_domain:
+            #                 cookie_domain_clean = cookie_domain.lstrip(".").lstrip("www.")
                             
-                            domain_matches = (
-                                cookie_domain_clean == current_domain or
-                                current_domain == "." + cookie_domain_clean or
-                                current_domain.startswith == ".www." + cookie_domain_clean or
-                                current_domain.startswith == "www." + cookie_domain_clean
-                            )
+            #                 domain_matches = (
+            #                     cookie_domain_clean == current_domain or
+            #                     current_domain == "." + cookie_domain_clean or
+            #                     current_domain.startswith == ".www." + cookie_domain_clean or
+            #                     current_domain.startswith == "www." + cookie_domain_clean
+            #                 )
 
-                            # print(current_domain, cookie_domain_clean, domain_matches)
+            #                 # print(current_domain, cookie_domain_clean, domain_matches)
                             
-                            if not domain_matches:
-                                self.logger.warning(f"Skipping cookie {cookie.get("name")} with domain {cookie_domain} for {current_domain}")
-                                continue
+            #                 if not domain_matches:
+            #                     self.logger.warning(f"Skipping cookie {cookie.get("name")} with domain {cookie_domain} for {current_domain}")
+            #                     continue
                         
-                        cookie_copy = cookie.copy()
-                        for key in list(cookie_copy.keys()):
-                            if key not in ["name", "value", "domain", "path", "expiry", "secure", "httpOnly"]:
-                                del cookie_copy[key]
+            #             cookie_copy = cookie.copy()
+            #             for key in list(cookie_copy.keys()):
+            #                 if key not in ["name", "value", "domain", "path", "expiry", "secure", "httpOnly"]:
+            #                     del cookie_copy[key]
                         
-                        try:
-                            self.driver.add_cookie(cookie_copy)
-                            self.logger.info(f"Set cookie: {cookie.get("name")}")
-                        except Exception as e:
-                            self.logger.warning(f"Could not set cookie {cookie.get("name")}: {e}")
+            #             try:
+            #                 self.driver.add_cookie(cookie_copy)
+            #                 self.logger.info(f"Set cookie: {cookie.get("name")}")
+            #             except Exception as e:
+            #                 self.logger.warning(f"Could not set cookie {cookie.get("name")}: {e}")
                     
-                    self.logger.info(f"Set {len(cookies)} cookies from previous session")
+            #         self.logger.info(f"Set {len(cookies)} cookies from previous session")
                     
-                except Exception as e:
-                    self.logger.error(f"Error setting cookies: {e}")
+            #     except Exception as e:
+            #         self.logger.error(f"Error setting cookies: {e}")
             
-            self.logger.info(f"Going to: {url} in 5s...")
-            time.sleep(3.11)
-            self.driver.get(url)
+            # self.logger.info(f"Going to: {url} in 5s...")
+            # time.sleep(2.11)
+            # self.driver.get(url)
             
             WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -368,10 +510,30 @@ class WebCrawler:
             with open('masterfile.csv', 'w', newline='', encoding='utf-8') as mf:
                 writer = csv.writer(mf)
                 writer.writerows(rows)
+            
+            # Remove from input file if success
+            if file_path and not comment:
+                # Read CSV and remove the domain
+                import csv
+                rows = []
+                with open(file_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    rows = [row for row in reader if row['Domain'] != domain_to_remove]
+                
+                # Write back without the removed domain
+                if rows:
+                    with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                        if rows:
+                            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+                            writer.writeheader()
+                            writer.writerows(rows)
+                
+                self.logger.info(f"Removed {domain_to_remove} from {file_path} after successful crawl")
+            
             self.logger.info(f"Title: {self.driver.title}")
             self.logger.info(f"URL(last visited page/subpage): {self.driver.current_url}")
-            self.logger.info(f"Cookies: {len(cookies)}")
-            self.logger.info(f"Requests: {len(requests)}")
+            self.logger.info(f"Cookies captured: {len(cookies)}")
+            self.logger.info(f"Requests captured: {len(requests)}")
             
         except Exception as e:
             self.logger.error(f"Error visiting {url}: {e}")
@@ -382,6 +544,7 @@ class WebCrawler:
 
             try:
                 rows = []
+                updated = False
                 with open('masterfile.csv', 'r', newline='', encoding='utf-8') as mf:
                     reader = csv.reader(mf)
                     header = next(reader)
