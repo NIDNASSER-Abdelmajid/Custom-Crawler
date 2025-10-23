@@ -216,7 +216,7 @@ class WebCrawler:
 
 
     def _save_data(self, profile_path, url, cookies, requests, profile_name):
-        """Save all data to JSON file with flattened structure"""
+        """Save all data to JSON file with flattened structure - only cookies with request associations"""
         data_file = os.path.join(profile_path, "data.json")
         parsed_url = url.replace("www.","").replace(".", "_").split("//")[-1]
         
@@ -226,47 +226,32 @@ class WebCrawler:
         browser_id = profile_name  # Using profile_name as browser_id
         
         entries = []
+        processed_cookies = set()  # Track which cookies we've already added
         
-        # Create a map of cookies by name and domain for quick lookup
-        cookie_map = {}
-        for cookie in cookies:
-            cookie_name = cookie.get("name")
-            cookie_domain = cookie.get("domain", "")
-            if cookie_name:
-                key = f"{cookie_name}:{cookie_domain}"
-                cookie_map[key] = cookie
-        
-        # Process requests and associate cookies that were set by each request
+        # Process requests and match with cookies
         for request in requests:
             request_url = request["url"]
             request_method = request["method"]
             request_timestamp = request["timestamp"]
             
-            # Check if this request set any cookies
+            # Skip chrome:// and other internal URLs
+            if request_url.startswith(("chrome://", "chrome-extension://", "devtools://")):
+                continue
+            
+            request_domain = request_url.split("/")[2] if "://" in request_url else ""
+            
+            # Check if this request set any cookies (from before/after comparison)
             cookies_set = request.get("cookies_set", [])
             
             if cookies_set:
-                # This request set cookies, create entries for each cookie
+                # This request directly set cookies
                 for cookie_info in cookies_set:
-                    cookie_name = cookie_info["name"]
+                    cookie_name = cookie_info.get("name", "")
+                    cookie_value = cookie_info.get("value", "")
                     cookie_domain = cookie_info.get("domain", "")
-                    
-                    # Find the actual cookie in our captured cookies
-                    key = f"{cookie_name}:{cookie_domain}"
-                    actual_cookie = cookie_map.get(key)
-                    
-                    if actual_cookie:
-                        # Use actual cookie data if available, otherwise use parsed data
-                        cookie_value = actual_cookie.get("value", cookie_info.get("value", ""))
-                        cookie_path = actual_cookie.get("path", cookie_info.get("path", "/"))
-                        cookie_secure = actual_cookie.get("secure", cookie_info.get("secure", False))
-                        cookie_httpOnly = actual_cookie.get("httpOnly", cookie_info.get("httpOnly", False))
-                    else:
-                        # Fallback to parsed data
-                        cookie_value = cookie_info.get("value", "")
-                        cookie_path = cookie_info.get("path", "/")
-                        cookie_secure = cookie_info.get("secure", False)
-                        cookie_httpOnly = cookie_info.get("httpOnly", False)
+                    cookie_path = cookie_info.get("path", "/")
+                    cookie_secure = cookie_info.get("secure", False)
+                    cookie_httpOnly = cookie_info.get("httpOnly", False)
                     
                     # Skip if essential cookie attributes are null/empty
                     if not cookie_name or not cookie_value:
@@ -299,59 +284,58 @@ class WebCrawler:
                         "party_type": party_type
                     }
                     entries.append(entry)
+                    processed_cookies.add(f"{cookie_name}:{cookie_domain}")
             else:
-                # This request didn't set any cookies, but we might still want to track it
-                # For now, we'll skip requests that don't set cookies to keep output focused on cookies
-                pass
-        
-        # Also include any cookies that weren't captured in request/response cycle
-        # (e.g., cookies set by JavaScript or already existing)
-        processed_cookies = set()
-        for entry in entries:
-            processed_cookies.add(f"{entry['cookie_name']}:{entry['cookie_domain']}")
-        
-        for cookie in cookies:
-            cookie_name = cookie.get("name")
-            cookie_value = cookie.get("value")
-            cookie_domain = cookie.get("domain", "")
-            
-            if not cookie_name or not cookie_value:
-                continue
-                
-            key = f"{cookie_name}:{cookie_domain}"
-            if key not in processed_cookies:
-                # This cookie wasn't associated with a request, add it with null request info
-                cookie_path = cookie.get("path")
-                cookie_secure = cookie.get("secure", False)
-                cookie_httpOnly = cookie.get("httpOnly", False)
-                
-                # Determine party_type
-                if cookie_domain:
+                # Try to match existing cookies with this request based on domain matching
+                for cookie in cookies:
+                    cookie_name = cookie.get("name", "")
+                    cookie_value = cookie.get("value", "")
+                    cookie_domain = cookie.get("domain", "")
+                    cookie_path = cookie.get("path", "/")
+                    cookie_secure = cookie.get("secure", False)
+                    cookie_httpOnly = cookie.get("httpOnly", False)
+                    
+                    if not cookie_name or not cookie_value:
+                        continue
+                    
+                    # Check if cookie domain matches request domain
                     cookie_domain_clean = cookie_domain.lstrip(".")
-                    if source_domain.endswith(cookie_domain_clean) or cookie_domain_clean == source_domain:
-                        party_type = "first-party"
-                    else:
-                        party_type = "third-party"
-                else:
-                    party_type = "unknown"
-                
-                entry = {
-                    "cookie_name": cookie_name,
-                    "cookie_value": cookie_value,
-                    "cookie_domain": cookie_domain,
-                    "cookie_path": cookie_path,
-                    "cookie_secure": cookie_secure,
-                    "cookie_httpOnly": cookie_httpOnly,
-                    "request_url": None,  # No associated request
-                    "request_method": None,
-                    "request_timestamp": None,
-                    "source_url": url,
-                    "timestamp": timestamp,
-                    "page_title": page_title,
-                    "browser_id": browser_id,
-                    "party_type": party_type
-                }
-                entries.append(entry)
+                    matches_domain = (
+                        request_domain.endswith(cookie_domain_clean) or
+                        cookie_domain_clean == request_domain or
+                        request_domain == cookie_domain
+                    )
+                    
+                    # Check if this cookie hasn't been processed yet
+                    cookie_key = f"{cookie_name}:{cookie_domain}"
+                    if matches_domain and cookie_key not in processed_cookies:
+                        # Determine party_type
+                        if cookie_domain:
+                            if source_domain.endswith(cookie_domain_clean) or cookie_domain_clean == source_domain:
+                                party_type = "first-party"
+                            else:
+                                party_type = "third-party"
+                        else:
+                            party_type = "unknown"
+
+                        entry = {
+                            "cookie_name": cookie_name,
+                            "cookie_value": cookie_value,
+                            "cookie_domain": cookie_domain,
+                            "cookie_path": cookie_path,
+                            "cookie_secure": cookie_secure,
+                            "cookie_httpOnly": cookie_httpOnly,
+                            "request_url": request_url,
+                            "request_method": request_method,
+                            "request_timestamp": request_timestamp,
+                            "source_url": url,
+                            "timestamp": timestamp,
+                            "page_title": page_title,
+                            "browser_id": browser_id,
+                            "party_type": party_type
+                        }
+                        entries.append(entry)
+                        processed_cookies.add(cookie_key)
         
         try:
             with open(data_file, "w", encoding="utf-8") as f:
@@ -359,7 +343,7 @@ class WebCrawler:
             with open(f"data/{parsed_url}.json", "w", encoding="utf-8") as f:
                 json.dump(entries, f, indent=2, ensure_ascii=False)
             
-            self.logger.info(f"Data saved: {len(entries)} cookie entries")
+            self.logger.info(f"Data saved: {len(entries)} cookie entries with request associations")
             
         except Exception as e:
             self.logger.error(f"Error saving data: {e}")
